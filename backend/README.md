@@ -13,25 +13,56 @@ Production-ready backend for the **AI Career Roadmap Generator** platform.
 - **Storage:** Cloudinary
 - **Docs:** Swagger/OpenAPI
 - **Tests:** Jest + Supertest
-- **Deploy:** Docker
+- **Deploy:** Node.js (native) — PM2 / Railway / Render
 
 ## Quick Start
 
-### 1. Start infrastructure
+### 1. Start infrastructure (native)
+
+**PostgreSQL 16** must be installed and running locally:
 
 ```bash
-cd docker
-docker compose up -d postgres redis
+# macOS
+brew install postgresql@16 && brew services start postgresql@16
+
+# Ubuntu / Debian
+sudo apt install postgresql-16 && sudo systemctl start postgresql
+
+# Windows — download installer from https://www.postgresql.org/download/windows/
+# or: winget install PostgreSQL.PostgreSQL.16
+```
+
+Create the database role and database (run once):
+
+```sql
+-- Connect as superuser: psql -U postgres
+CREATE ROLE acrg WITH LOGIN PASSWORD 'acrg_secret';
+CREATE DATABASE acrg_db OWNER acrg;
+GRANT ALL PRIVILEGES ON DATABASE acrg_db TO acrg;
+```
+
+**Redis 7** must be installed and running on port 6379:
+
+```bash
+# macOS
+brew install redis && brew services start redis
+
+# Ubuntu / Debian
+sudo apt install redis-server && sudo systemctl start redis-server
+
+# Windows — use WSL2 (recommended) or Memurai (https://www.memurai.com/)
+# Inside WSL: sudo apt install redis-server && sudo service redis start
 ```
 
 ### 2. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env with your secrets
+# Edit .env — fill in JWT_ACCESS_SECRET and JWT_REFRESH_SECRET (min 32 chars each)
+# DATABASE_URL and REDIS_URL already point to localhost — no change needed
 ```
 
-### 3. Install & migrate
+### 3. Install, migrate & seed
 
 ```bash
 npm install
@@ -49,12 +80,19 @@ API: `http://localhost:4000/api/v1`
 Swagger: `http://localhost:4000/api-docs`  
 Health: `http://localhost:4000/health`
 
-## Docker (full stack)
+## Production Build
 
 ```bash
-cd docker
-docker compose up --build
+# Build the TypeScript source (Prisma client is auto-generated via postinstall)
+npm run build
+
+# Start with automatic migration + server (replaces the old Dockerfile CMD)
+npm run start:prod
 ```
+
+> **`postinstall` hook**: Running `npm install` now automatically runs `prisma generate`, so the Prisma client is always up-to-date after dependency installs.
+>
+> **`start:prod`**: Runs `prisma migrate deploy` then starts the server — equivalent to what the old `Dockerfile CMD` did automatically.
 
 ## Architecture
 

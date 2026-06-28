@@ -1,68 +1,181 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
-import { 
-  User, Briefcase, Heart, BookOpen, ChevronRight, 
-  ChevronLeft, Save, Sparkles, CheckCircle2 
+import {
+  User, Briefcase, Heart, BookOpen, ChevronRight,
+  ChevronLeft, Save, Sparkles, CheckCircle2, AlertCircle, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../context/AuthContext';
+import { profileService } from '../services/profile.service';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import axios from 'axios';
+
+interface ProfileFormData {
+  name: string;
+  age: number;
+  education: string;
+  university: string;
+  graduationYear: number;
+  experience: string;
+  certifications: string;
+  projects: string;
+  interests: string[];
+  learningStyle: string;
+}
 
 export const CareerProfile: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [step, setStep] = useState(1);
-  const [saveDrafting, setSaveDrafting] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(
+    localStorage.getItem('acrg_profile_id')
+  );
 
-  const { register, handleSubmit, trigger, formState: { errors } } = useForm({
+  const { register, handleSubmit, trigger, reset, formState: { errors } } = useForm<ProfileFormData>({
     defaultValues: {
-      name: 'Alex Rivera',
+      name: user?.name ?? '',
       age: 21,
-      education: 'B.Tech in Computer Science & Engineering',
-      university: 'Metropolitan Institute of Technology',
-      graduationYear: 2027,
-      experience: 'Frontend Web Developer Intern at PixelCraft Solutions (3 months)',
-      certifications: 'AWS Certified Cloud Practitioner, Google Data Analytics Professional Certificate',
-      projects: 'E-Commerce Frontend React App, Personal Portfolio Site',
-      interests: ['web-dev', 'ai'],
+      education: '',
+      university: '',
+      graduationYear: new Date().getFullYear() + 1,
+      experience: '',
+      certifications: '',
+      projects: '',
+      interests: [],
       learningStyle: 'hands-on'
     }
   });
 
+  // Try to load an existing profile
+  const { data: existingProfile, isLoading: profileLoading } = useQuery({
+    queryKey: ['profile', profileId],
+    queryFn: async () => {
+      if (!profileId) return null;
+      return profileService.getById(profileId);
+    },
+    enabled: !!profileId,
+  });
+
+  // Populate form when existing profile loads (React Query v5 — no onSuccess in useQuery)
+  useEffect(() => {
+    if (!existingProfile) return;
+    reset({
+      name: user?.name ?? '',
+      age: 21,
+      education: existingProfile.education ?? '',
+      university: existingProfile.university ?? '',
+      graduationYear: existingProfile.graduationYear ?? new Date().getFullYear() + 1,
+      experience: '',
+      certifications: existingProfile.certifications?.join(', ') ?? '',
+      projects: '',
+      interests: existingProfile.interests ?? [],
+      learningStyle: existingProfile.learningStyle ?? 'hands-on',
+    });
+  }, [existingProfile, user?.name, reset]);
+
+  // Save draft (update or create)
+  const { mutate: saveDraft, isPending: isSavingDraft } = useMutation({
+    mutationFn: async (data: ProfileFormData) => {
+      const payload = {
+        education: data.education,
+        university: data.university,
+        graduationYear: Number(data.graduationYear),
+        certifications: data.certifications ? data.certifications.split(',').map((c) => c.trim()) : [],
+        interests: data.interests,
+        learningStyle: data.learningStyle,
+      };
+
+      if (profileId) {
+        return profileService.update(profileId, payload);
+      } else {
+        const created = await profileService.create(payload);
+        setProfileId(created.id);
+        localStorage.setItem('acrg_profile_id', created.id);
+        return created;
+      }
+    },
+    onSuccess: () => {
+      setDraftSaved(true);
+      setApiError(null);
+      setTimeout(() => setDraftSaved(false), 2500);
+    },
+    onError: (err) => {
+      if (axios.isAxiosError(err)) {
+        setApiError(err.response?.data?.message ?? 'Failed to save draft.');
+      } else {
+        setApiError('Something went wrong. Please try again.');
+      }
+    },
+  });
+
+  // Final submit: save profile and navigate to goals
+  const { mutate: submitProfile, isPending: isSubmitting } = useMutation({
+    mutationFn: async (data: ProfileFormData) => {
+      const payload = {
+        education: data.education,
+        university: data.university,
+        graduationYear: Number(data.graduationYear),
+        certifications: data.certifications ? data.certifications.split(',').map((c) => c.trim()) : [],
+        interests: data.interests,
+        learningStyle: data.learningStyle,
+      };
+
+      if (profileId) {
+        return profileService.update(profileId, payload);
+      } else {
+        const created = await profileService.create(payload);
+        localStorage.setItem('acrg_profile_id', created.id);
+        return created;
+      }
+    },
+    onSuccess: () => {
+      setApiError(null);
+      navigate('/goals');
+    },
+    onError: (err) => {
+      if (axios.isAxiosError(err)) {
+        setApiError(err.response?.data?.message ?? 'Failed to save profile.');
+      } else {
+        setApiError('Something went wrong. Please try again.');
+      }
+    },
+  });
+
   const nextStep = async () => {
-    // Validate inputs for specific step before moving forward
     const fieldsToValidate = step === 1
       ? (['name', 'age', 'education', 'university', 'graduationYear'] as const)
       : [];
-
     const isValid = await trigger(fieldsToValidate);
     if (isValid) {
-      setStep(prev => Math.min(prev + 1, 4));
+      setStep((prev) => Math.min(prev + 1, 4));
     }
   };
 
   const prevStep = () => {
-    setStep(prev => Math.max(prev - 1, 1));
+    setStep((prev) => Math.max(prev - 1, 1));
   };
 
-  const handleSaveDraft = () => {
-    setSaveDrafting(true);
-    setTimeout(() => {
-      setSaveDrafting(false);
-      setDraftSaved(true);
-      setTimeout(() => setDraftSaved(false), 2000);
-    }, 1000);
-  };
-
-  const onSubmit = () => {
-    navigate('/goals');
+  const onSubmit = (data: ProfileFormData) => {
+    submitProfile(data);
   };
 
   const stepsInfo = [
-    { title: "Personal Details", icon: User },
-    { title: "Experience", icon: Briefcase },
-    { title: "Interests", icon: Heart },
-    { title: "Learning Style", icon: BookOpen }
+    { title: 'Personal Details', icon: User },
+    { title: 'Experience', icon: Briefcase },
+    { title: 'Interests', icon: Heart },
+    { title: 'Learning Style', icon: BookOpen }
   ];
+
+  if (profileLoading) {
+    return (
+      <div className="flex items-center justify-center h-80">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 pb-12">
@@ -73,13 +186,27 @@ export const CareerProfile: React.FC = () => {
           <p className="text-xs text-slate-400 dark:text-slate-500">Provide details to generate the most accurate AI learning path</p>
         </div>
         <button
-          onClick={handleSaveDraft}
-          disabled={saveDrafting}
+          onClick={handleSubmit((data) => saveDraft(data))}
+          disabled={isSavingDraft}
           className="px-3.5 py-1.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-350 transition-colors flex items-center gap-1.5"
         >
-          {saveDrafting ? 'Saving...' : draftSaved ? <><CheckCircle2 className="w-3.5 h-3.5 text-success" /> Saved</> : <><Save className="w-3.5 h-3.5" /> Save Draft</>}
+          {isSavingDraft ? (
+            <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</>
+          ) : draftSaved ? (
+            <><CheckCircle2 className="w-3.5 h-3.5 text-success" /> Saved</>
+          ) : (
+            <><Save className="w-3.5 h-3.5" /> Save Draft</>
+          )}
         </button>
       </div>
+
+      {/* API Error */}
+      {apiError && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <p className="text-xs font-medium">{apiError}</p>
+        </div>
+      )}
 
       {/* Step Indicators */}
       <div className="glass-panel p-4 rounded-xl border border-slate-200/60 dark:border-slate-800 grid grid-cols-4 gap-2">
@@ -90,10 +217,10 @@ export const CareerProfile: React.FC = () => {
           return (
             <div key={idx} className="flex flex-col items-center gap-1.5 text-center">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all ${
-                isActive 
-                  ? 'bg-primary text-white border-primary shadow-md shadow-primary/20 scale-105' 
-                  : isCompleted 
-                    ? 'bg-success/10 text-success border-success/30' 
+                isActive
+                  ? 'bg-primary text-white border-primary shadow-md shadow-primary/20 scale-105'
+                  : isCompleted
+                    ? 'bg-success/10 text-success border-success/30'
                     : 'bg-slate-50 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700'
               }`}>
                 <s.icon className="w-4 h-4" />
@@ -111,17 +238,11 @@ export const CareerProfile: React.FC = () => {
         <AnimatePresence mode="wait">
           {/* STEP 1: Personal Info */}
           {step === 1 && (
-            <motion.div
-              key="step1"
-              initial={{ x: 15, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -15, opacity: 0 }}
-              className="space-y-4"
-            >
+            <motion.div key="step1" initial={{ x: 15, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -15, opacity: 0 }} className="space-y-4">
               <h3 className="font-bold text-slate-900 dark:text-white text-sm border-b border-slate-100 dark:border-slate-800 pb-2 flex items-center gap-2">
                 <User className="w-4 h-4 text-primary" /> Step 1: Personal Information
               </h3>
-              
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Full Name</label>
@@ -176,13 +297,7 @@ export const CareerProfile: React.FC = () => {
 
           {/* STEP 2: Experience */}
           {step === 2 && (
-            <motion.div
-              key="step2"
-              initial={{ x: 15, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -15, opacity: 0 }}
-              className="space-y-4"
-            >
+            <motion.div key="step2" initial={{ x: 15, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -15, opacity: 0 }} className="space-y-4">
               <h3 className="font-bold text-slate-900 dark:text-white text-sm border-b border-slate-100 dark:border-slate-800 pb-2 flex items-center gap-2">
                 <Briefcase className="w-4 h-4 text-primary" /> Step 2: Experience & Qualifications
               </h3>
@@ -198,7 +313,7 @@ export const CareerProfile: React.FC = () => {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Certifications Earned</label>
+                <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Certifications Earned (comma-separated)</label>
                 <textarea
                   {...register('certifications')}
                   placeholder="AWS Cloud Practitioner, GCP Architect, CCNA etc."
@@ -221,13 +336,7 @@ export const CareerProfile: React.FC = () => {
 
           {/* STEP 3: Interests */}
           {step === 3 && (
-            <motion.div
-              key="step3"
-              initial={{ x: 15, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -15, opacity: 0 }}
-              className="space-y-4"
-            >
+            <motion.div key="step3" initial={{ x: 15, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -15, opacity: 0 }} className="space-y-4">
               <h3 className="font-bold text-slate-900 dark:text-white text-sm border-b border-slate-100 dark:border-slate-800 pb-2 flex items-center gap-2">
                 <Heart className="w-4 h-4 text-primary" /> Step 3: Technical Interests
               </h3>
@@ -258,15 +367,9 @@ export const CareerProfile: React.FC = () => {
             </motion.div>
           )}
 
-          {/* STEP 4: Preferred Learning Style */}
+          {/* STEP 4: Learning Style */}
           {step === 4 && (
-            <motion.div
-              key="step4"
-              initial={{ x: 15, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -15, opacity: 0 }}
-              className="space-y-4"
-            >
+            <motion.div key="step4" initial={{ x: 15, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -15, opacity: 0 }} className="space-y-4">
               <h3 className="font-bold text-slate-900 dark:text-white text-sm border-b border-slate-100 dark:border-slate-800 pb-2 flex items-center gap-2">
                 <BookOpen className="w-4 h-4 text-primary" /> Step 4: Preferred Learning Style
               </h3>
@@ -322,9 +425,14 @@ export const CareerProfile: React.FC = () => {
           ) : (
             <button
               type="submit"
-              className="px-5 py-2 bg-gradient-to-r from-primary to-secondary hover:from-primary-dark hover:to-secondary-dark text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-md shadow-primary/20"
+              disabled={isSubmitting}
+              className="px-5 py-2 bg-gradient-to-r from-primary to-secondary hover:from-primary-dark hover:to-secondary-dark text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-md shadow-primary/20 disabled:opacity-75"
             >
-              Save & Analyze Goal <Sparkles className="w-4 h-4" />
+              {isSubmitting ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</>
+              ) : (
+                <>Save & Analyze Goal <Sparkles className="w-4 h-4" /></>
+              )}
             </button>
           )}
         </div>

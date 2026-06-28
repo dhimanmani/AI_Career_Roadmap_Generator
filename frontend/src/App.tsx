@@ -1,7 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from './context/ThemeContext';
+import { AuthProvider } from './context/AuthContext';
 import { Layout } from './components/Layout';
+import { ProtectedRoute } from './components/ProtectedRoute';
 
 // Import Pages
 import { LandingPage } from './pages/LandingPage';
@@ -38,35 +40,40 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <BrowserRouter>
-          <Routes>
-            {/* Public routes */}
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
+          {/* AuthProvider must be inside BrowserRouter so it can call useNavigate */}
+          <AuthProvider>
+            <Routes>
+              {/* Public routes */}
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
 
-            {/* Dashboard shell routing */}
-            <Route element={<Layout />}>
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/profile" element={<CareerProfile />} />
-              <Route path="/goals" element={<GoalSelection />} />
-              <Route path="/skills" element={<SkillInventory />} />
-              <Route path="/gap-analysis" element={<GapAnalysis />} />
-              <Route path="/roadmap" element={<RoadmapBuilder />} />
-              <Route path="/progress" element={<ProgressTracking />} />
-              <Route path="/projects" element={<ProjectRecommendations />} />
-              <Route path="/mentor" element={<MentorReview />} />
-              <Route path="/notifications" element={<Notifications />} />
-              <Route path="/reports" element={<ReportsAnalytics />} />
-              <Route path="/admin" element={<AdminDashboard />} />
-              <Route path="/settings" element={<Settings />} />
-            </Route>
+              {/* Protected dashboard shell */}
+              <Route element={<ProtectedRoute />}>
+                <Route element={<Layout />}>
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/profile" element={<CareerProfile />} />
+                  <Route path="/goals" element={<GoalSelection />} />
+                  <Route path="/skills" element={<SkillInventory />} />
+                  <Route path="/gap-analysis" element={<GapAnalysis />} />
+                  <Route path="/roadmap" element={<RoadmapBuilder />} />
+                  <Route path="/progress" element={<ProgressTracking />} />
+                  <Route path="/projects" element={<ProjectRecommendations />} />
+                  <Route path="/mentor" element={<MentorReview />} />
+                  <Route path="/notifications" element={<Notifications />} />
+                  <Route path="/reports" element={<ReportsAnalytics />} />
+                  <Route path="/admin" element={<AdminDashboard />} />
+                  <Route path="/settings" element={<Settings />} />
+                </Route>
+              </Route>
 
-            {/* Fallback route */}
-            <Route path="/404" element={<NotFound />} />
-            <Route path="*" element={<Navigate to="/404" replace />} />
-          </Routes>
+              {/* Fallback route */}
+              <Route path="/404" element={<NotFound />} />
+              <Route path="*" element={<Navigate to="/404" replace />} />
+            </Routes>
+          </AuthProvider>
         </BrowserRouter>
       </ThemeProvider>
     </QueryClientProvider>

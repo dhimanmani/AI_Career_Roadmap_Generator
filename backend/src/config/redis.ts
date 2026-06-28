@@ -4,11 +4,24 @@ import { logger } from './logger';
 
 let redis: Redis | null = null;
 
+/**
+ * Returns the ioredis singleton, creating it if necessary.
+ * retryStrategy caps reconnect attempts so the console is not flooded in dev
+ * when Redis is unavailable.
+ */
 export function getRedis(): Redis {
   if (!redis) {
     redis = new Redis(env.REDIS_URL, {
-      maxRetriesPerRequest: null,
+      maxRetriesPerRequest: null, // required by BullMQ workers
       lazyConnect: true,
+      // In non-production: give up after 1 reconnect attempt (prevents log flood).
+      // In production: exponential back-off up to 30 s.
+      retryStrategy: (times: number) => {
+        if (env.NODE_ENV !== 'production') {
+          return times >= 1 ? null : 500;
+        }
+        return Math.min(times * 2000, 30000);
+      },
     });
 
     redis.on('error', (err) => logger.error('Redis error', err));
@@ -17,17 +30,35 @@ export function getRedis(): Redis {
   return redis;
 }
 
-export async function connectRedis(): Promise<void> {
+/**
+ * Attempts to connect to Redis and verifies connectivity with a PING.
+ * Returns true  → Redis is up; callers may start BullMQ workers.
+ * Returns false → Redis is unavailable; workers are skipped.
+ * Throws in production so the process fails fast.
+ */
+export async function connectRedis(): Promise<boolean> {
   try {
     const client = getRedis();
     if (client.status !== 'ready') {
       await client.connect();
     }
+    // Verify the connection is genuinely usable.
+    await client.ping();
+    return true;
   } catch (err) {
+    // Clean up the failed client so its internal reconnect timer is cancelled.
+    if (redis) {
+      redis.disconnect(false);
+      redis = null;
+    }
     if (env.NODE_ENV === 'production') {
       throw err;
     }
-    logger.warn('Redis unavailable — caching and job queues may be limited');
+    logger.warn(
+      'Redis unavailable — BullMQ workers and in-memory caching are disabled for this session. ' +
+      `Start Redis on ${env.REDIS_URL} and restart the server to enable them.`
+    );
+    return false;
   }
 }
 

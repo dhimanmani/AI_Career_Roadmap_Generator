@@ -29,12 +29,16 @@ export class MentorsService {
       },
     });
 
-    await getNotificationQueue().add('mentor-review', {
-      userId: input.studentId,
-      title: 'New Mentor Review',
-      message: 'A mentor has submitted feedback on your roadmap.',
-      type: 'MENTOR',
-    });
+    try {
+      await getNotificationQueue().add('mentor-review', {
+        userId: input.studentId,
+        title: 'New Mentor Review',
+        message: 'A mentor has submitted feedback on your roadmap.',
+        type: 'MENTOR',
+      });
+    } catch {
+      // Redis unavailable — notification queuing skipped; review is persisted
+    }
 
     return review;
   }
@@ -69,12 +73,16 @@ export class MentorsService {
     });
 
     if (input.status === 'APPROVED' || input.status === 'REJECTED') {
-      await getNotificationQueue().add('review-status', {
-        userId: review.studentId,
-        title: `Roadmap Review ${input.status}`,
-        message: `Your mentor has ${input.status.toLowerCase()} your roadmap review.`,
-        type: 'MENTOR',
-      });
+      try {
+        await getNotificationQueue().add('review-status', {
+          userId: review.studentId,
+          title: `Roadmap Review ${input.status}`,
+          message: `Your mentor has ${input.status.toLowerCase()} your roadmap review.`,
+          type: 'MENTOR',
+        });
+      } catch {
+        // Redis unavailable — notification queuing skipped; status update is persisted
+      }
     }
 
     return updated;

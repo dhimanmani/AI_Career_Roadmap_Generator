@@ -7,7 +7,24 @@ import { notificationsService } from '../modules/notifications/notifications.ser
 import { analyticsService } from '../modules/analytics/analytics.service';
 import { JobStatus } from '@prisma/client';
 
-const connection = { url: env.REDIS_URL };
+/**
+ * BullMQ connection options shared across all workers.
+ *
+ * enableOfflineQueue: false → commands fail immediately instead of queuing
+ *   when the connection drops, preventing silent hangs.
+ * retryStrategy: same cap-at-1 behaviour as the main Redis client in dev so
+ *   a lost Redis in development doesn't flood the console.
+ */
+const connection = {
+  url: env.REDIS_URL,
+  enableOfflineQueue: false,
+  retryStrategy: (times: number) => {
+    if (env.NODE_ENV !== 'production') {
+      return times >= 1 ? null : 500;
+    }
+    return Math.min(times * 2000, 30000);
+  },
+};
 
 async function trackJob(queueName: string, job: Job, status: JobStatus, result?: unknown, error?: string) {
   const jobId = String(job.id);
@@ -120,11 +137,13 @@ export function startWorkers(): Worker[] {
   );
 
   workers.forEach((worker) => {
+    // 'error' MUST be handled — an unhandled EventEmitter 'error' event crashes Node.js.
+    worker.on('error', (err) => logger.error(`Worker [${worker.name}] error`, err));
     worker.on('failed', (job, err) => {
-      logger.error(`Job ${job?.id} failed`, err);
+      logger.error(`Job ${job?.id} failed on [${worker.name}]`, err);
       if (job) trackJob(worker.name, job, 'FAILED', undefined, err.message);
     });
-    worker.on('completed', (job) => logger.info(`Job ${job.id} completed on ${worker.name}`));
+    worker.on('completed', (job) => logger.info(`Job ${job.id} completed on [${worker.name}]`));
   });
 
   logger.info('Background workers started');

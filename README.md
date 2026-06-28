@@ -92,8 +92,9 @@ Caching & Background Jobs:
 - BullMQ
 
 Deployment:
-- Docker
-- Cloud Hosting
+- Node.js (native) \u2014 PM2 / Railway / Render
+- PostgreSQL 16 (native or managed)
+- Redis 7 (native or managed \u2014 e.g., Upstash)
 
 ## Future Enhancements
 

@@ -33,13 +33,17 @@ export class RoadmapsService {
     });
 
     if (input.useAi && process.env.OPENAI_API_KEY) {
-      await getRoadmapQueue().add('generate-roadmap', {
-        roadmapId: roadmap.id,
-        userId,
-        careerGoal: activeGoal.careerGoal,
-        targetTimeline: activeGoal.targetTimeline,
-      });
-      return { ...roadmap, message: 'Roadmap generation queued' };
+      try {
+        await getRoadmapQueue().add('generate-roadmap', {
+          roadmapId: roadmap.id,
+          userId,
+          careerGoal: activeGoal.careerGoal,
+          targetTimeline: activeGoal.targetTimeline,
+        });
+        return { ...roadmap, message: 'Roadmap generation queued' };
+      } catch {
+        // Redis unavailable — fall through to synchronous template generation
+      }
     }
 
     return this.createMilestonesFromTemplate(roadmap.id, userId, activeGoal.careerGoal.toString());

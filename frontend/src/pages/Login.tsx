@@ -1,27 +1,48 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
-import { Eye, EyeOff, Lock, Mail, Loader2, GraduationCap, Github } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, Loader2, GraduationCap, Github, AlertCircle } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import axios from 'axios';
+
+interface LoginFormData {
+  email: string;
+  password: string;
+}
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
+  const { login, isAuthenticated } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  
-  const { register, handleSubmit, formState: { errors } } = useForm({
-    defaultValues: {
-      email: '',
-      password: ''
-    }
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  // Redirect if already authenticated
+  React.useEffect(() => {
+    if (isAuthenticated) navigate('/dashboard', { replace: true });
+  }, [isAuthenticated, navigate]);
+
+  const { register, handleSubmit, formState: { errors } } = useForm<LoginFormData>({
+    defaultValues: { email: '', password: '' },
   });
 
-  const onSubmit = () => {
+  const onSubmit = async (data: LoginFormData) => {
     setLoading(true);
-    // Simulate API delay
-    setTimeout(() => {
+    setApiError(null);
+    try {
+      await login(data.email, data.password);
+      navigate('/dashboard', { replace: true });
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        setApiError(
+          err.response?.data?.message ?? 'Invalid email or password. Please try again.'
+        );
+      } else {
+        setApiError('Something went wrong. Please try again.');
+      }
+    } finally {
       setLoading(false);
-      navigate('/dashboard');
-    }, 1500);
+    }
   };
 
   return (
@@ -38,6 +59,14 @@ export const Login: React.FC = () => {
           <p className="text-xs text-slate-400 dark:text-slate-500">Sign in to your AI Career Roadmap account</p>
         </div>
 
+        {/* API Error Banner */}
+        {apiError && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <p className="text-xs font-medium">{apiError}</p>
+          </div>
+        )}
+
         {/* Login Form */}
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           {/* Email */}
@@ -49,9 +78,9 @@ export const Login: React.FC = () => {
               </span>
               <input
                 type="email"
-                {...register('email', { 
+                {...register('email', {
                   required: 'Email address is required',
-                  pattern: { value: /^\S+@\S+$/i, message: 'Invalid email format' }
+                  pattern: { value: /^\S+@\S+$/i, message: 'Invalid email format' },
                 })}
                 placeholder="alex@university.edu"
                 className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-250 dark:border-slate-700 bg-transparent text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all placeholder:text-slate-400"
@@ -72,9 +101,9 @@ export const Login: React.FC = () => {
               </span>
               <input
                 type={showPassword ? 'text' : 'password'}
-                {...register('password', { 
+                {...register('password', {
                   required: 'Password is required',
-                  minLength: { value: 6, message: 'Password must be at least 6 characters' }
+                  minLength: { value: 6, message: 'Password must be at least 6 characters' },
                 })}
                 placeholder="••••••••"
                 className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-slate-250 dark:border-slate-700 bg-transparent text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all placeholder:text-slate-400"

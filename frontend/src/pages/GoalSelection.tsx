@@ -5,17 +5,75 @@ import { CareerCard } from '../components/CareerCard';
 import { Modal } from '../components/Modal';
 import { Drawer } from '../components/Drawer';
 import { useNavigate } from 'react-router-dom';
-import { Target, Scale, Award, Info, Sparkles, DollarSign, TrendingUp, ChevronRight } from 'lucide-react';
+import { Target, Scale, Award, Info, Sparkles, DollarSign, TrendingUp, ChevronRight, Loader2, AlertCircle } from 'lucide-react';
+import { goalService } from '../services/goal.service';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 
 export const GoalSelection: React.FC = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedGoalId, setSelectedGoalId] = useState<string>('full-stack');
   const [detailGoal, setDetailGoal] = useState<CareerGoal | null>(null);
   const [compareList, setCompareList] = useState<CareerGoal[]>([]);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  // Load existing career goals to pre-select if user already has one
+  const { data: existingGoals = [] } = useQuery({
+    queryKey: ['career-goals'],
+    queryFn: goalService.list,
+    staleTime: 30_000,
+  });
+
+  // Pre-select existing active goal
+  React.useEffect(() => {
+    const activeGoal = existingGoals.find((g) => g.isActive);
+    if (activeGoal) {
+      // Map backend track back to frontend catalog id
+      const reverseMap: Record<string, string> = {
+        SOFTWARE_ENGINEER: 'swe',
+        AI_ENGINEER: 'ai-eng',
+        DATA_SCIENTIST: 'data-sci',
+        FULL_STACK_DEVELOPER: 'full-stack',
+        DEVOPS_ENGINEER: 'devops',
+        CLOUD_ENGINEER: 'cloud-eng',
+        CYBERSECURITY_ANALYST: 'cybersecurity',
+      };
+      setSelectedGoalId(reverseMap[activeGoal.careerGoal] ?? 'full-stack');
+    }
+  }, [existingGoals]);
+
+  // Mutation: save career goal to backend
+  const { mutate: saveGoal, isPending: isSaving } = useMutation({
+    mutationFn: async () => {
+      const track = goalService.mapIdToTrack(selectedGoalId);
+      const activeGoal = existingGoals.find((g) => g.isActive);
+
+      if (activeGoal && activeGoal.careerGoal === track) {
+        // Same goal already active — no change needed
+        return;
+      }
+
+      // Create a new career goal (backend handles activation logic)
+      await goalService.create(track);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['career-goals'] });
+      navigate('/skills');
+    },
+    onError: (err) => {
+      if (axios.isAxiosError(err)) {
+        setApiError(err.response?.data?.message ?? 'Failed to save career goal. Please try again.');
+      } else {
+        setApiError('Something went wrong. Please try again.');
+      }
+    },
+  });
 
   const handleSelectGoal = (id: string) => {
     setSelectedGoalId(id);
+    setApiError(null);
   };
 
   const handleViewDetails = (career: CareerGoal) => {
@@ -24,13 +82,12 @@ export const GoalSelection: React.FC = () => {
 
   const handleAddToCompare = (career: CareerGoal) => {
     if (compareList.find((c) => c.id === career.id)) {
-      setCompareList(prev => prev.filter((c) => c.id !== career.id));
+      setCompareList((prev) => prev.filter((c) => c.id !== career.id));
     } else {
       if (compareList.length >= 2) {
-        // Limit to 2 for side-by-side comparison
         setCompareList([compareList[1], career]);
       } else {
-        setCompareList(prev => [...prev, career]);
+        setCompareList((prev) => [...prev, career]);
       }
     }
   };
@@ -41,8 +98,7 @@ export const GoalSelection: React.FC = () => {
   };
 
   const handleConfirmGoal = () => {
-    // Save selection and proceed to skills assessment
-    navigate('/skills');
+    saveGoal();
   };
 
   return (
@@ -53,7 +109,7 @@ export const GoalSelection: React.FC = () => {
           <h2 className="text-xl font-bold text-slate-900 dark:text-white">Choose Your Target Career Goal</h2>
           <p className="text-xs text-slate-500 dark:text-slate-400">Select the target career you are aiming for. ACRG will analyze your gaps relative to this standard.</p>
         </div>
-        
+
         {compareList.length >= 2 && (
           <button
             onClick={startComparison}
@@ -63,6 +119,14 @@ export const GoalSelection: React.FC = () => {
           </button>
         )}
       </div>
+
+      {/* API Error Banner */}
+      {apiError && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <p className="text-xs font-medium">{apiError}</p>
+        </div>
+      )}
 
       {/* Career Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -87,15 +151,24 @@ export const GoalSelection: React.FC = () => {
           <div>
             <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Active Selection</p>
             <h4 className="text-sm font-bold text-slate-805 dark:text-white">
-              {careerGoals.find(c => c.id === selectedGoalId)?.title || 'None Selected'}
+              {careerGoals.find((c) => c.id === selectedGoalId)?.title || 'None Selected'}
             </h4>
           </div>
         </div>
         <button
           onClick={handleConfirmGoal}
-          className="px-6 py-2.5 bg-gradient-to-r from-primary to-secondary hover:from-primary-dark hover:to-secondary-dark text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-1.5 transition-all"
+          disabled={isSaving}
+          className="px-6 py-2.5 bg-gradient-to-r from-primary to-secondary hover:from-primary-dark hover:to-secondary-dark text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-1.5 transition-all disabled:opacity-75"
         >
-          Confirm & Analyze Skills <ChevronRight className="w-4.5 h-4.5" />
+          {isSaving ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" /> Saving...
+            </>
+          ) : (
+            <>
+              Confirm & Analyze Skills <ChevronRight className="w-4.5 h-4.5" />
+            </>
+          )}
         </button>
       </div>
 

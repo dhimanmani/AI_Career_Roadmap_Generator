@@ -1,31 +1,56 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
-import { Eye, EyeOff, Lock, Mail, Loader2, GraduationCap, Github } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, User, Loader2, GraduationCap, Github, AlertCircle } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import axios from 'axios';
+
+interface RegisterFormData {
+  name: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+}
 
 export const Register: React.FC = () => {
   const navigate = useNavigate();
+  const { register: registerUser, isAuthenticated } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
 
-  const { register, handleSubmit, watch, formState: { errors } } = useForm({
-    defaultValues: {
-      email: '',
-      password: '',
-      confirmPassword: ''
-    }
+  // Redirect if already authenticated
+  React.useEffect(() => {
+    if (isAuthenticated) navigate('/dashboard', { replace: true });
+  }, [isAuthenticated, navigate]);
+
+  const { register, handleSubmit, watch, formState: { errors } } = useForm<RegisterFormData>({
+    defaultValues: { name: '', email: '', password: '', confirmPassword: '' },
   });
 
   const passwordVal = watch('password');
 
-  const onSubmit = () => {
+  const onSubmit = async (data: RegisterFormData) => {
     setLoading(true);
-    setTimeout(() => {
+    setApiError(null);
+    try {
+      await registerUser(data.name, data.email, data.password);
+      navigate('/profile', { replace: true });
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        const msg = err.response?.data?.message;
+        setApiError(
+          msg === 'Email already exists'
+            ? 'An account with this email already exists. Try logging in.'
+            : (msg ?? 'Registration failed. Please try again.')
+        );
+      } else {
+        setApiError('Something went wrong. Please try again.');
+      }
+    } finally {
       setLoading(false);
-      // Direct user to multi-step career profile questionnaire first
-      navigate('/profile');
-    }, 1500);
+    }
   };
 
   return (
@@ -41,8 +66,36 @@ export const Register: React.FC = () => {
           <p className="text-xs text-slate-400 dark:text-slate-500">Get your personalized AI roadmap today</p>
         </div>
 
+        {/* API Error Banner */}
+        {apiError && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <p className="text-xs font-medium">{apiError}</p>
+          </div>
+        )}
+
         {/* Register Form */}
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          {/* Full Name */}
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Full Name</label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 pointer-events-none">
+                <User className="w-4.5 h-4.5" />
+              </span>
+              <input
+                type="text"
+                {...register('name', {
+                  required: 'Full name is required',
+                  minLength: { value: 2, message: 'Name must be at least 2 characters' },
+                })}
+                placeholder="Alex Rivera"
+                className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-250 dark:border-slate-700 bg-transparent text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all placeholder:text-slate-400"
+              />
+            </div>
+            {errors.name && <span className="text-[10px] text-rose-500 font-semibold">{errors.name.message}</span>}
+          </div>
+
           {/* Email */}
           <div className="space-y-1">
             <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Email Address</label>
@@ -54,7 +107,7 @@ export const Register: React.FC = () => {
                 type="email"
                 {...register('email', {
                   required: 'Email address is required',
-                  pattern: { value: /^\S+@\S+$/i, message: 'Invalid email format' }
+                  pattern: { value: /^\S+@\S+$/i, message: 'Invalid email format' },
                 })}
                 placeholder="alex@university.edu"
                 className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-250 dark:border-slate-700 bg-transparent text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all placeholder:text-slate-400"
@@ -74,9 +127,14 @@ export const Register: React.FC = () => {
                 type={showPassword ? 'text' : 'password'}
                 {...register('password', {
                   required: 'Password is required',
-                  minLength: { value: 6, message: 'Password must be at least 6 characters' }
+                  minLength: { value: 8, message: 'Password must be at least 8 characters' },
+                  validate: {
+                    hasUppercase: (v) => /[A-Z]/.test(v) || 'Must contain an uppercase letter (e.g. A)',
+                    hasLowercase: (v) => /[a-z]/.test(v) || 'Must contain a lowercase letter (e.g. a)',
+                    hasNumber:    (v) => /[0-9]/.test(v) || 'Must contain a number (e.g. 1)',
+                  },
                 })}
-                placeholder="••••••••"
+                placeholder="e.g. Password1"
                 className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-slate-250 dark:border-slate-700 bg-transparent text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all placeholder:text-slate-400"
               />
               <button
@@ -87,7 +145,10 @@ export const Register: React.FC = () => {
                 {showPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
               </button>
             </div>
-            {errors.password && <span className="text-[10px] text-rose-500 font-semibold">{errors.password.message}</span>}
+            {errors.password
+              ? <span className="text-[10px] text-rose-500 font-semibold">{errors.password.message}</span>
+              : <span className="text-[10px] text-slate-400">Min 8 chars · uppercase · lowercase · number</span>
+            }
           </div>
 
           {/* Confirm Password */}
@@ -101,7 +162,7 @@ export const Register: React.FC = () => {
                 type={showConfirmPassword ? 'text' : 'password'}
                 {...register('confirmPassword', {
                   required: 'Please confirm your password',
-                  validate: (val) => val === passwordVal || 'Passwords do not match'
+                  validate: (val) => val === passwordVal || 'Passwords do not match',
                 })}
                 placeholder="••••••••"
                 className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-slate-250 dark:border-slate-700 bg-transparent text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all placeholder:text-slate-400"

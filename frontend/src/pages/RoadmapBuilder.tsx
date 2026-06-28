@@ -1,44 +1,156 @@
-import React, { useState } from 'react';
-import { sampleRoadmap } from '../services/mockData';
-import type { RoadmapMilestone } from '../services/mockData';
+import React, { useState, useEffect } from 'react';
 import { TimelineComponent } from '../components/TimelineComponent';
 import { RoadmapCard } from '../components/RoadmapCard';
 import { Modal } from '../components/Modal';
-import { 
-  Sparkles, FileDown, RotateCw, LayoutGrid, ListTodo, 
-  Milestone, PlayCircle, BookOpen, Clock, Loader2, CheckCircle2 
+import {
+  Sparkles, FileDown, RotateCw, LayoutGrid, ListTodo,
+  Milestone, PlayCircle, BookOpen, Clock, Loader2, CheckCircle2, AlertCircle, Target
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { roadmapService } from '../services/roadmap.service';
+import { goalService } from '../services/goal.service';
+import type { Roadmap, Milestone as MilestoneType, MilestoneStatus } from '../types/api';
+import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
+
+// Map backend Milestone → frontend display format used by existing components
+type FrontendMilestone = {
+  id: string;
+  phase: number;
+  skillName: string;
+  description: string;
+  duration: string;
+  difficulty: 'Beginner' | 'Intermediate' | 'Advanced';
+  status: 'Not Started' | 'In Progress' | 'Completed';
+  resources: { title: string; url: string; type: 'Video' | 'Article' | 'Course' }[];
+};
+
+function toFrontendMilestone(m: MilestoneType): FrontendMilestone {
+  const diffMap: Record<string, 'Beginner' | 'Intermediate' | 'Advanced'> = {
+    BEGINNER: 'Beginner', INTERMEDIATE: 'Intermediate', ADVANCED: 'Advanced',
+  };
+  const resources = Array.isArray(m.resources)
+    ? (m.resources as { title: string; url: string; type: string }[]).map((r) => ({
+        title: r.title,
+        url: r.url ?? '#',
+        type: (r.type as 'Video' | 'Article' | 'Course') ?? 'Article',
+      }))
+    : [];
+
+  return {
+    id: m.id,
+    phase: m.phase as 1 | 2 | 3 | 4 | 5,
+    skillName: m.title,
+    description: m.description,
+    duration: `${m.estimatedHours}h`,
+    difficulty: diffMap[m.difficulty] ?? 'Intermediate',
+    status: roadmapService.statusToDisplay(m.status),
+    resources,
+  };
+}
+
+function EmptyRoadmapState({ onNavigate }: { onNavigate: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-96 space-y-5 border border-dashed border-primary/30 rounded-xl">
+      <div className="p-4 bg-primary/10 rounded-full">
+        <Target className="w-8 h-8 text-primary" />
+      </div>
+      <div className="text-center space-y-1">
+        <h3 className="font-bold text-slate-800 dark:text-white">No Roadmap Yet</h3>
+        <p className="text-xs text-slate-500 dark:text-slate-400">Set a career goal first, then generate your personalized AI roadmap.</p>
+      </div>
+      <button
+        onClick={onNavigate}
+        className="px-5 py-2.5 bg-gradient-to-r from-primary to-secondary text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-1.5"
+      >
+        <Sparkles className="w-4 h-4" /> Set Career Goal & Generate
+      </button>
+    </div>
+  );
+}
 
 export const RoadmapBuilder: React.FC = () => {
-  const [roadmaps, setRoadmaps] = useState<RoadmapMilestone[]>(sampleRoadmap);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
   const [view, setView] = useState<'timeline' | 'kanban' | 'checklist'>('timeline');
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  const [activeDetails, setActiveDetails] = useState<RoadmapMilestone | null>(null);
+  const [activeDetails, setActiveDetails] = useState<FrontendMilestone | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
-  // Update status (Completed, In Progress, Not Started)
-  const handleStatusChange = (id: string, nextStatus: 'Not Started' | 'In Progress' | 'Completed') => {
-    setRoadmaps(prev => prev.map(m => {
-      if (m.id === id) return { ...m, status: nextStatus };
-      return m;
-    }));
+  // Load saved roadmap id
+  const savedRoadmapId = localStorage.getItem('acrg_roadmap_id');
+
+  // Fetch active career goals
+  const { data: goals = [] } = useQuery({
+    queryKey: ['career-goals'],
+    queryFn: goalService.list,
+    staleTime: 60_000,
+  });
+  const activeGoal = goals.find((g) => g.isActive) ?? goals[0];
+
+  // Fetch existing roadmap
+  const {
+    data: roadmap,
+    isLoading: roadmapLoading,
+    refetch: refetchRoadmap,
+  } = useQuery<Roadmap | null>({
+    queryKey: ['roadmap', savedRoadmapId],
+    queryFn: async () => {
+      if (!savedRoadmapId) return null;
+      return roadmapService.getById(savedRoadmapId);
+    },
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  const milestones: FrontendMilestone[] = (roadmap?.milestones ?? []).map(toFrontendMilestone);
+
+  // Generate roadmap mutation
+  const { mutate: generateRoadmap, isPending: isGenerating } = useMutation({
+    mutationFn: () => roadmapService.generate({ useAi: false }),
+    onSuccess: (newRoadmap) => {
+      localStorage.setItem('acrg_roadmap_id', newRoadmap.id);
+      queryClient.invalidateQueries({ queryKey: ['roadmap'] });
+      queryClient.invalidateQueries({ queryKey: ['active-roadmap'] });
+      setGenerateError(null);
+      refetchRoadmap();
+    },
+    onError: (err) => {
+      if (axios.isAxiosError(err)) {
+        setGenerateError(err.response?.data?.message ?? 'Failed to generate roadmap.');
+      } else {
+        setGenerateError('Something went wrong. Please try again.');
+      }
+    },
+  });
+
+  // Update milestone status mutation
+  const { mutate: updateStatus } = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: MilestoneStatus }) =>
+      roadmapService.updateMilestoneStatus(id, status),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['roadmap', savedRoadmapId] });
+    },
+  });
+
+  const handleStatusChange = (
+    id: string,
+    nextStatus: 'Not Started' | 'In Progress' | 'Completed'
+  ) => {
+    updateStatus({ id, status: roadmapService.displayToStatus(nextStatus) });
   };
 
-  // Regenerate simulated call
   const handleRegenerate = () => {
-    setIsRegenerating(true);
-    setTimeout(() => {
-      setIsRegenerating(false);
-      // Mock update status back to defaults
-      setRoadmaps(sampleRoadmap.map(m => ({
-        ...m,
-        status: m.id === 'm1' || m.id === 'm2' ? 'Completed' : m.id === 'm3' ? 'In Progress' : 'Not Started'
-      })));
-    }, 2000);
+    if (!activeGoal) {
+      setGenerateError('You need to set a career goal before generating a roadmap.');
+      return;
+    }
+    setGenerateError(null);
+    generateRoadmap();
   };
 
-  // Export PDF simulated call
   const handleExportPDF = () => {
     setIsExporting(true);
     setTimeout(() => {
@@ -47,12 +159,14 @@ export const RoadmapBuilder: React.FC = () => {
     }, 1500);
   };
 
-  // Kanban groupings
   const kanbanColumns = [
-    { title: "Not Started", status: "Not Started", color: "bg-slate-500/10 text-slate-550 border-slate-200" },
-    { title: "In Progress", status: "In Progress", color: "bg-primary/10 text-primary border-primary/20" },
-    { title: "Completed", status: "Completed", color: "bg-success/10 text-success border-success/20" }
+    { title: 'Not Started', status: 'Not Started', color: 'bg-slate-500/10 text-slate-550 border-slate-200' },
+    { title: 'In Progress', status: 'In Progress', color: 'bg-primary/10 text-primary border-primary/20' },
+    { title: 'Completed', status: 'Completed', color: 'bg-success/10 text-success border-success/20' },
   ];
+
+  const noGoal = !activeGoal;
+  const noRoadmap = !roadmap && !roadmapLoading;
 
   return (
     <div className="space-y-6 pb-12">
@@ -60,26 +174,27 @@ export const RoadmapBuilder: React.FC = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-900 dark:text-white">AI-Generated Learning Roadmap</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Personalized sequence tailored for placement drives starting August.</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {activeGoal
+              ? `Personalized path for ${goalService.trackToDisplayName(activeGoal.careerGoal)}`
+              : 'Set a career goal to generate your roadmap.'}
+          </p>
         </div>
 
         <div className="flex gap-2 w-full sm:w-auto">
           <button
             onClick={handleRegenerate}
-            disabled={isRegenerating}
-            className="flex-1 sm:flex-initial px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-350 transition-colors flex items-center justify-center gap-1.5"
+            disabled={isGenerating || noGoal}
+            title={noGoal ? 'Set a career goal first' : 'Regenerate roadmap'}
+            className="flex-1 sm:flex-initial px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-350 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
           >
-            {isRegenerating ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <RotateCw className="w-3.5 h-3.5" />
-            )}
-            Regenerate
+            {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCw className="w-3.5 h-3.5" />}
+            {roadmap ? 'Regenerate' : 'Generate'}
           </button>
           <button
             onClick={handleExportPDF}
-            disabled={isExporting}
-            className="flex-1 sm:flex-initial px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-darkBg font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+            disabled={isExporting || !roadmap}
+            className="flex-1 sm:flex-initial px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-darkBg font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
           >
             {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
             Export PDF
@@ -87,54 +202,59 @@ export const RoadmapBuilder: React.FC = () => {
         </div>
       </div>
 
+      {/* Error Banner */}
+      {generateError && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <p className="text-xs font-medium">{generateError}</p>
+        </div>
+      )}
+
       {/* View Selectors */}
-      <div className="flex justify-between items-center bg-white dark:bg-darkBg-card p-2 border border-slate-200 dark:border-slate-800 rounded-xl">
-        <div className="flex gap-1">
-          <button
-            onClick={() => setView('timeline')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors ${
-              view === 'timeline'
-                ? 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-            }`}
-          >
-            <Milestone className="w-4 h-4" /> Timeline View
-          </button>
-          <button
-            onClick={() => setView('kanban')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors ${
-              view === 'kanban'
-                ? 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-            }`}
-          >
-            <LayoutGrid className="w-4 h-4" /> Kanban Board
-          </button>
-          <button
-            onClick={() => setView('checklist')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors ${
-              view === 'checklist'
-                ? 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-            }`}
-          >
-            <ListTodo className="w-4 h-4" /> Milestone Checklist
-          </button>
+      {roadmap && (
+        <div className="flex justify-between items-center bg-white dark:bg-darkBg-card p-2 border border-slate-200 dark:border-slate-800 rounded-xl">
+          <div className="flex gap-1">
+            {(['timeline', 'kanban', 'checklist'] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors ${
+                  view === v
+                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                }`}
+              >
+                {v === 'timeline' && <Milestone className="w-4 h-4" />}
+                {v === 'kanban' && <LayoutGrid className="w-4 h-4" />}
+                {v === 'checklist' && <ListTodo className="w-4 h-4" />}
+                {v.charAt(0).toUpperCase() + v.slice(1)} {v === 'timeline' ? 'View' : v === 'kanban' ? 'Board' : 'Checklist'}
+              </button>
+            ))}
+          </div>
+
+          <div className="hidden md:flex items-center gap-1.5 px-3 text-xs text-slate-400 dark:text-slate-550">
+            <Sparkles className="w-4.5 h-4.5 text-primary animate-pulse" />
+            <span>Curriculum generated using ACRG core model</span>
+          </div>
         </div>
-        
-        <div className="hidden md:flex items-center gap-1.5 px-3 text-xs text-slate-400 dark:text-slate-550">
-          <Sparkles className="w-4.5 h-4.5 text-primary animate-pulse" />
-          <span>Curriculum generated instantly using ACRG core model</span>
-        </div>
-      </div>
+      )}
 
       {/* Main Views Container */}
       <div className="min-h-[450px]">
-        {isRegenerating ? (
+        {roadmapLoading ? (
           <div className="flex flex-col items-center justify-center h-96 space-y-4">
             <Loader2 className="w-8 h-8 text-primary animate-spin" />
-            <p className="text-xs text-slate-500 animate-pulse">Analyzing profiles & recalculating gaps...</p>
+            <p className="text-xs text-slate-500 animate-pulse">Loading your roadmap...</p>
           </div>
+        ) : isGenerating ? (
+          <div className="flex flex-col items-center justify-center h-96 space-y-4">
+            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+            <p className="text-xs text-slate-500 animate-pulse">Analyzing profile & generating curriculum...</p>
+          </div>
+        ) : noGoal ? (
+          <EmptyRoadmapState onNavigate={() => navigate('/goals')} />
+        ) : noRoadmap ? (
+          <EmptyRoadmapState onNavigate={() => handleRegenerate()} />
         ) : (
           <AnimatePresence mode="wait">
             {/* 1. Timeline View */}
@@ -147,7 +267,7 @@ export const RoadmapBuilder: React.FC = () => {
                 className="bg-white dark:bg-darkBg-card p-6 md:p-8 border border-slate-200 dark:border-slate-800 rounded-xl"
               >
                 <TimelineComponent
-                  milestones={roadmaps}
+                  milestones={milestones}
                   onStatusChange={handleStatusChange}
                   onViewDetails={setActiveDetails}
                 />
@@ -164,15 +284,13 @@ export const RoadmapBuilder: React.FC = () => {
                 className="grid grid-cols-1 md:grid-cols-3 gap-6"
               >
                 {kanbanColumns.map((col) => {
-                  const colMilestones = roadmaps.filter(m => m.status === col.status);
-                  
+                  const colMilestones = milestones.filter((m) => m.status === col.status);
                   return (
                     <div key={col.status} className="flex flex-col space-y-4 min-h-[400px]">
                       <div className={`px-4 py-2 border rounded-xl font-bold text-xs flex justify-between items-center ${col.color}`}>
                         <span>{col.title}</span>
                         <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-900 border text-[10px]">{colMilestones.length}</span>
                       </div>
-                      
                       <div className="space-y-4 overflow-y-auto flex-1 max-h-[70vh] pr-1">
                         {colMilestones.length > 0 ? (
                           colMilestones.map((m) => (
@@ -204,7 +322,7 @@ export const RoadmapBuilder: React.FC = () => {
                 exit={{ opacity: 0, y: -10 }}
                 className="bg-white dark:bg-darkBg-card border border-slate-200 dark:border-slate-800 rounded-xl divide-y divide-slate-100 dark:divide-slate-800"
               >
-                {roadmaps.map((m) => (
+                {milestones.map((m) => (
                   <div key={m.id} className="p-4 flex items-center justify-between gap-4 text-xs">
                     <div className="flex items-center gap-3">
                       <button
@@ -224,7 +342,6 @@ export const RoadmapBuilder: React.FC = () => {
                         <p className="text-[10px] text-slate-405 dark:text-slate-500">Phase {m.phase} &bull; {m.duration}</p>
                       </div>
                     </div>
-                    
                     <button
                       onClick={() => setActiveDetails(m)}
                       className="px-3 py-1.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg font-semibold"
@@ -256,7 +373,7 @@ export const RoadmapBuilder: React.FC = () => {
         {activeDetails && (
           <div className="space-y-5">
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{activeDetails.description}</p>
-            
+
             <div className="grid grid-cols-2 gap-4 text-xs py-3 border-y border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-1.5 text-slate-400">
                 <Clock className="w-4 h-4 text-primary" />
@@ -270,28 +387,34 @@ export const RoadmapBuilder: React.FC = () => {
 
             <div className="space-y-2.5">
               <h4 className="text-xs font-bold uppercase text-slate-400">Complete list of resources</h4>
-              <div className="space-y-2">
-                {activeDetails.resources.map((res, idx) => (
-                  <a
-                    key={idx}
-                    href={res.url}
-                    className="p-3 border border-slate-100 dark:border-slate-800 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/40 flex items-center justify-between gap-3 text-xs"
-                  >
-                    <div className="flex items-center gap-2">
-                      {res.type === 'Video' ? (
-                        <PlayCircle className="w-4 h-4 text-rose-500" />
-                      ) : (
-                        <BookOpen className="w-4 h-4 text-blue-500" />
-                      )}
-                      <div>
-                        <span className="font-semibold text-slate-800 dark:text-slate-200 block">{res.title}</span>
-                        <span className="text-[9px] text-slate-400 uppercase tracking-wider">{res.type} reference</span>
+              {activeDetails.resources.length > 0 ? (
+                <div className="space-y-2">
+                  {activeDetails.resources.map((res, idx) => (
+                    <a
+                      key={idx}
+                      href={res.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-3 border border-slate-100 dark:border-slate-800 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/40 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="flex items-center gap-2">
+                        {res.type === 'Video' ? (
+                          <PlayCircle className="w-4 h-4 text-rose-500" />
+                        ) : (
+                          <BookOpen className="w-4 h-4 text-blue-500" />
+                        )}
+                        <div>
+                          <span className="font-semibold text-slate-800 dark:text-slate-200 block">{res.title}</span>
+                          <span className="text-[9px] text-slate-400 uppercase tracking-wider">{res.type} reference</span>
+                        </div>
                       </div>
-                    </div>
-                    <span className="text-[10px] text-primary font-bold hover:underline">Link &rarr;</span>
-                  </a>
-                ))}
-              </div>
+                      <span className="text-[10px] text-primary font-bold hover:underline">Link &rarr;</span>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 italic">No resources attached to this milestone.</p>
+              )}
             </div>
           </div>
         )}
