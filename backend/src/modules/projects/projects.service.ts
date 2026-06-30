@@ -2,6 +2,7 @@ import { prisma } from '../../database/prisma';
 import { aiService } from '../../ai/ai.service';
 import { gapAnalysisService } from '../gap-analysis/gap-analysis.service';
 import { CareerTrack } from '@prisma/client';
+import { env } from '../../config/env';
 
 export class ProjectsService {
   async list() {
@@ -28,7 +29,7 @@ export class ProjectsService {
       const missingSkills = gap.missingSkills as Array<{ name: string }>;
       const missing = missingSkills.map((s) => s.name);
 
-      if (process.env.OPENAI_API_KEY) {
+      if (env.GEMINI_API_KEY) {
         const aiProjects = await aiService.recommendProjects(activeGoal, missing);
         return aiProjects.projects;
       }

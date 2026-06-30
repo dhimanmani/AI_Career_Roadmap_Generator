@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
@@ -19,19 +19,15 @@ interface AiCostMetrics {
 }
 
 export class AiService {
-  private client: OpenAI | null = null;
+  private client: GoogleGenAI | null = null;
   private metrics: AiCostMetrics = { totalTokens: 0, estimatedCostUsd: 0, calls: 0 };
 
-  private getClient(): OpenAI {
+  private getClient(): GoogleGenAI {
     if (!this.client) {
-      if (!env.OPENAI_API_KEY) {
+      if (!env.GEMINI_API_KEY) {
         throw new AppError(503, 'AI service not configured', 'AI_UNAVAILABLE');
       }
-      this.client = new OpenAI({
-        apiKey: env.OPENAI_API_KEY,
-        timeout: env.OPENAI_TIMEOUT_MS,
-        maxRetries: env.OPENAI_MAX_RETRIES,
-      });
+      this.client = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
     }
     return this.client;
   }
@@ -45,25 +41,37 @@ export class AiService {
 
     let lastError: Error | null = null;
 
-    for (let attempt = 1; attempt <= env.OPENAI_MAX_RETRIES; attempt++) {
+    for (let attempt = 1; attempt <= env.GEMINI_MAX_RETRIES; attempt++) {
       try {
-        const response = await client.chat.completions.create({
-          model: env.OPENAI_MODEL,
-          messages: [
-            { role: 'system', content: 'You are a career planning AI. Always respond with valid JSON only.' },
-            { role: 'user', content: prompt },
+        const result = await client.models.generateContent({
+          model: env.GEMINI_MODEL,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text:
+                    'You are a career planning AI. Always respond with valid JSON only.\n\n' +
+                    prompt,
+                },
+              ],
+            },
           ],
-          response_format: { type: 'json_object' },
-          temperature: 0.4,
+          config: {
+            responseMimeType: 'application/json',
+            temperature: 0.4,
+          },
         });
 
-        const content = response.choices[0]?.message?.content;
+        const content = result.text;
         if (!content) throw new Error('Empty AI response');
 
-        const usage = response.usage;
+        const usage = result.usageMetadata;
         if (usage) {
-          this.metrics.totalTokens += usage.total_tokens;
-          this.metrics.estimatedCostUsd += (usage.total_tokens / 1000) * 0.002;
+          const totalTokens = usage.totalTokenCount ?? 0;
+          this.metrics.totalTokens += totalTokens;
+          // Gemini Flash pricing: ~$0.000 for small volumes; keep consistent metric shape
+          this.metrics.estimatedCostUsd += (totalTokens / 1_000_000) * 0.15;
           this.metrics.calls += 1;
         }
 
@@ -72,7 +80,7 @@ export class AiService {
       } catch (error) {
         lastError = error as Error;
         logger.warn(`AI call attempt ${attempt} failed: ${lastError.message}`);
-        if (attempt < env.OPENAI_MAX_RETRIES) {
+        if (attempt < env.GEMINI_MAX_RETRIES) {
           await new Promise((r) => setTimeout(r, 1000 * attempt));
         }
       }

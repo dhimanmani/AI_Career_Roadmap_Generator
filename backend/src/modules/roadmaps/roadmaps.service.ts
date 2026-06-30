@@ -6,6 +6,7 @@ import { analyticsService } from '../analytics/analytics.service';
 import { getRoadmapQueue } from '../../jobs/queues';
 import { z } from 'zod';
 import { generateRoadmapSchema, updateMilestoneSchema } from './roadmaps.schema';
+import { env } from '../../config/env';
 
 type GenerateInput = z.infer<typeof generateRoadmapSchema>;
 type UpdateMilestoneInput = z.infer<typeof updateMilestoneSchema>;
@@ -32,7 +33,7 @@ export class RoadmapsService {
       },
     });
 
-    if (input.useAi && process.env.OPENAI_API_KEY) {
+    if (input.useAi && env.GEMINI_API_KEY) {
       try {
         await getRoadmapQueue().add('generate-roadmap', {
           roadmapId: roadmap.id,
@@ -58,7 +59,7 @@ export class RoadmapsService {
     let milestones = FALLBACK_MILESTONES;
     let aiMetadata: Prisma.InputJsonValue = { source: 'template' };
 
-    if (process.env.OPENAI_API_KEY) {
+    if (env.GEMINI_API_KEY) {
       try {
         const aiResult = await aiService.generateRoadmap(
           careerGoal,
@@ -73,7 +74,7 @@ export class RoadmapsService {
           resources: m.resources,
         }));
         aiMetadata = {
-          source: 'openai',
+          source: 'gemini',
           summary: aiResult.summary,
           cost: aiService.getMetrics(),
         } as unknown as Prisma.InputJsonValue;
