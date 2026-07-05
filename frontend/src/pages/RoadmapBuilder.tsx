@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { TimelineComponent } from '../components/TimelineComponent';
 import { RoadmapCard } from '../components/RoadmapCard';
 import { Modal } from '../components/Modal';
@@ -17,7 +17,7 @@ import axios from 'axios';
 // Map backend Milestone → frontend display format used by existing components
 type FrontendMilestone = {
   id: string;
-  phase: number;
+  phase: 1 | 2 | 3 | 4 | 5;
   skillName: string;
   description: string;
   duration: string;

@@ -4,20 +4,21 @@ import { Bell, CheckSquare, Trash2, Loader2, AlertCircle } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { notificationService } from '../services/notification.service';
 import type { Notification } from '../types/api';
+import type { NotificationItemType } from '../services/mockData';
 
 // Map backend type to display category
-function mapCategory(type: string): string {
-  const map: Record<string, string> = {
+function mapCategory(type: string): NotificationItemType['category'] {
+  const map: Record<string, NotificationItemType['category']> = {
     ROADMAP: 'Roadmap Updates',
     MENTOR: 'Mentor Feedback',
     REMINDER: 'Deadlines',
     SYSTEM: 'Skill Recommendations',
   };
-  return map[type] ?? type;
+  return map[type] ?? 'Roadmap Updates';
 }
 
 // Shape notifications to the format the existing NotificationItem component expects
-function toDisplayNotif(n: Notification) {
+function toDisplayNotif(n: Notification): NotificationItemType {
   return {
     id: n.id,
     title: n.title,
@@ -25,7 +26,6 @@ function toDisplayNotif(n: Notification) {
     category: mapCategory(n.type),
     read: n.isRead,
     time: new Date(n.createdAt).toLocaleDateString(),
-    icon: n.type,
   };
 }
 
